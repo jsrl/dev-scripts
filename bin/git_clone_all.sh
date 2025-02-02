@@ -1,38 +1,63 @@
 #!/bin/bash
 
-# Check if the token is provided as a parameter
-if [ -z "$1" ]; then
-    echo "Error: You must provide your GitHub token as the first parameter."
-    echo "Usage: $0 <github_token>"
+# Path to the file where the GitHub token is stored
+TOKEN_FILE="$(dirname "$0")/.github_token"  # Token file located in the same directory as the script
+
+# Check if the token file exists
+if [ ! -f "$TOKEN_FILE" ]; then
+    echo "❌ Error: Token file ($TOKEN_FILE) not found. Please create the file with your GitHub token."
+    exit 1
+fi
+
+# Read the token from the file
+GITHUB_TOKEN=$(cat "$TOKEN_FILE")
+
+# Check if the token is empty
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "❌ Error: The token file is empty. Please provide a valid GitHub token."
     exit 1
 fi
 
 # Configuration
-GITHUB_USER="jsrl"  # You can change this or pass it as a second parameter if you prefer
-GITHUB_TOKEN="$1"                   # Token passed as the first parameter
-DEST_DIR="$(dirname "$0")"          # Use the directory where the script is located
+GITHUB_USER="jsrl"  
+DEST_DIR="$(dirname "$0")"  
 
-# Create the destination folder if it doesn't exist
-mkdir -p "$DEST_DIR"
+# Step 1️⃣: Verify curl is working and fetch repositories
+echo "🔍 Fetching repositories from GitHub..."
+RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/user/repos?type=all&per_page=100")
 
-# Get the list of repositories (public and private)
-REPOS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/user/repos?type=all&per_page=100" | jq -r '.[].ssh_url')
+# Step 2️⃣: Check for errors in the API response (without printing everything)
+ERROR_MSG=$(echo "$RESPONSE" | grep -o '"message": "[^"]*' | cut -d'"' -f4)
 
-# Check if repositories were fetched
-if [ -z "$REPOS" ]; then
-    echo "Error: Could not fetch repositories. Please check your token and internet connection."
+if [ -n "$ERROR_MSG" ]; then
+    echo "❌ Error: $ERROR_MSG"
     exit 1
 fi
 
-# Clone each repository if it doesn't already exist
+# Extract repository HTTPS URLs (use HTTPS instead of SSH)
+REPOS=$(echo "$RESPONSE" | jq -r '.[].clone_url')
+
+# Check if repositories were fetched
+if [ -z "$REPOS" ]; then
+    echo "❌ Error: No repositories found or failed to fetch repositories."
+    exit 1
+fi
+
+# Step 5️⃣: Debugging messages inside the loop
 for REPO in $REPOS; do
-    REPO_NAME=$(basename "$REPO" .git)
-    if [ -d "$DEST_DIR/$REPO_NAME" ]; then
-        echo "Repository $REPO_NAME already exists in $DEST_DIR. Skipping..."
+    REPO_NAME=$(basename "$REPO" .git)  # Remove the '.git' from the repository name
+
+    # Ensure there is no .git at the end
+    REPO_NAME="${REPO_NAME%.git}"
+
+    REPO_PATH="$DEST_DIR/$REPO_NAME"
+
+    if [ -d "$REPO_PATH" ]; then
+        echo "⏩ Skipping $REPO_NAME (already exists in $DEST_DIR)"
     else
-        echo "Cloning $REPO_NAME..."
+        echo "⬇️  Cloning $REPO_NAME..."
         git clone "$REPO" "$DEST_DIR/$REPO_NAME"
     fi
 done
 
-echo "All repositories have been processed. Check $DEST_DIR for cloned repositories."
+echo "✅ All repositories have been processed. Check $DEST_DIR for cloned repositories."
